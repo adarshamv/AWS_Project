@@ -21,27 +21,44 @@ pipeline {
             }
         }
 
-        stage("Configure Prometheus & Grafana") {
-            steps {
-                script {
-                    sh """
-                    helm repo add stable https://charts.helm.sh/stable || true
-                    helm repo add prometheus-community https://prometheus-community.github.io/helm-charts || true
-                    # Check if namespace 'prometheus' exists
-                    if kubectl get namespace prometheus > /dev/null 2>&1; then
-                        # If namespace exists, upgrade the Helm release
-                        helm upgrade --install stable prometheus-community/kube-prometheus-stack -n prometheus
-                    else
-                        # If namespace does not exist, create it and install Helm release
-                        kubectl create namespace prometheus
-                        helm install stable --install prometheus-community/kube-prometheus-stack -n prometheus
-                    fi
-                    kubectl patch svc stable-kube-prometheus-sta-prometheus -n prometheus -p '{"spec": {"type": "LoadBalancer"}}'
-                    kubectl patch svc stable-grafana -n prometheus -p '{"spec": {"type": "LoadBalancer"}}'
-                    """
-                }
+    stage("Configure Prometheus & Grafana") {
+        steps {
+            script {
+                sh """
+                # Add Helm repositories
+                helm repo add stable https://charts.helm.sh/stable || true
+                helm repo add prometheus-community https://prometheus-community.github.io/helm-charts || true
+                helm repo update
+
+                # Create namespace if it does not exist
+                kubectl create namespace prometheus --dry-run=client -o yaml | kubectl apply -f -
+
+                # Install or Upgrade Prometheus Stack
+                helm upgrade --install stable prometheus-community/kube-prometheus-stack \
+                    -n prometheus
+
+                # Wait for services to be created
+                sleep 30
+
+                # Verify services
+                kubectl get svc -n prometheus
+
+                # Expose Prometheus via LoadBalancer
+                kubectl patch svc stable-kube-prometheus-sta-prometheus \
+                    -n prometheus \
+                    -p '{"spec":{"type":"LoadBalancer"}}' || true
+
+                # Expose Grafana via LoadBalancer
+                kubectl patch svc stable-grafana \
+                    -n prometheus \
+                    -p '{"spec":{"type":"LoadBalancer"}}' || true
+
+                # Show services after patching
+                kubectl get svc -n prometheus
+                """
             }
         }
+    }
 
         stage("Configure ArgoCD") {
             steps {
